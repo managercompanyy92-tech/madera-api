@@ -365,7 +365,14 @@ app.post('/api/profile/:userId', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+// === ТЕСТОВЫЕ МАРШРУТЫ ДЛЯ ПРОВЕРКИ ===
+app.get('/', (req, res) => {
+  res.json({ ok: true, message: 'Madera API is running' });
+});
 
+app.get('/api/test', (req, res) => {
+  res.json({ ok: true, message: 'API работает корректно' });
+});
 // === ЗАПУСК СЕРВЕРА ===
 const port = process.env.PORT || 3001;
 
