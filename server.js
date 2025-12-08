@@ -1,208 +1,381 @@
-// server.js
-// ПРОСТОЙ API-СЕРВЕР ДЛЯ РЕГИСТРАЦИИ, ЛОГИНА И ЗАКАЗОВ
-// Node 18+, Express 4
-
 import express from 'express';
 import cors from 'cors';
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
-import pg from 'pg';
+import dotenv from 'dotenv';
+import pkg from 'pg';
+import bcrypt from 'bcryptjs';
 
-const { Pool } = pg;
-
-// !! ЗАМЕНИ на свои параметры БД
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
-});
-
-// !! ЗАМЕНИ на свой секрет
-const JWT_SECRET = process.env.JWT_SECRET || 'very-secret-key';
+dotenv.config();
+const { Pool } = pkg;
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// -------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ --------
+// === ПОДКЛЮЧЕНИЕ К БД ===
+if (!process.env.DATABASE_URL) {
+  console.error('ERROR: DATABASE_URL is not set');
+  process.exit(1);
+}
 
-async function query(q, params) {
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
+
+// === СОЗДАНИЕ ТАБЛИЦ ПРИ ЗАПУСКЕ ===
+async function initDb() {
   const client = await pool.connect();
   try {
-    const res = await client.query(q, params);
-    return res.rows;
+    await client.query('BEGIN');
+
+    // Пользователи (клиенты и партнёры)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        phone TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        promo_code TEXT UNIQUE,
+        is_partner BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+
+    // Заказы
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS orders (
+        id SERIAL PRIMARY KEY,
+        client_name TEXT NOT NULL,
+        client_phone TEXT NOT NULL,
+        user_id INTEGER REFERENCES users(id),
+        partner_id INTEGER REFERENCES users(id),
+        promo_code TEXT,
+        status_step INTEGER NOT NULL DEFAULT 1,
+        created_at TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+
+    // Профиль клиента (расширенные данные)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS profiles (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER UNIQUE REFERENCES users(id),
+        city TEXT,
+        address TEXT,
+        landmark TEXT,
+        email TEXT,
+        style TEXT,
+        comment TEXT,
+        updated_at TIMESTAMPTZ DEFAULT now()
+      );
+    `);
+
+    await client.query('COMMIT');
+    console.log('DB init: tables are ready');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('DB init error:', e);
+    throw e;
   } finally {
     client.release();
   }
 }
 
-function signToken(user) {
-  return jwt.sign(
-    { id: user.id, phone: user.phone, promo_code: user.promo_code },
-    JWT_SECRET,
-    { expiresIn: '30d' }
-  );
+// === ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ===
+function cleanPhone(phone) {
+  if (!phone) return '';
+  return phone.replace(/\D/g, '');
 }
 
-function authMiddleware(req, res, next) {
-  const auth = req.headers.authorization || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'NO_TOKEN' });
-
-  try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    req.user = payload;
-    next();
-  } catch {
-    return res.status(401).json({ error: 'BAD_TOKEN' });
-  }
-}
-
-// -------- АВТОРИЗАЦИЯ --------
-
-// Регистрация
-app.post('/api/auth/register', async (req, res) => {
-  const { name, phone, password } = req.body || {};
-  if (!name || !phone || !password) {
-    return res.status(400).json({ error: 'REQUIRED_FIELDS' });
-  }
-
-  const existing = await query(
-    'SELECT id FROM users WHERE phone = $1',
-    [phone]
-  );
-  if (existing.length) {
-    return res.status(409).json({ error: 'PHONE_EXISTS' });
-  }
-
-  const hash = await bcrypt.hash(password, 10);
-
-  // промокод = номер телефона, можно поменять логику
-  const promoCode = phone;
-
-  const rows = await query(
-    `INSERT INTO users(name, phone, password_hash, promo_code)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id, name, phone, promo_code`,
-    [name, phone, hash, promoCode]
-  );
-
-  const user = rows[0];
-  const token = signToken(user);
-  res.json({ token, user });
-});
-
-// Логин
-app.post('/api/auth/login', async (req, res) => {
-  const { phone, password } = req.body || {};
-  if (!phone || !password) {
-    return res.status(400).json({ error: 'REQUIRED_FIELDS' });
-  }
-
-  const rows = await query(
-    'SELECT id, name, phone, password_hash, promo_code FROM users WHERE phone = $1',
-    [phone]
-  );
-  const user = rows[0];
-  if (!user) return res.status(401).json({ error: 'NOT_FOUND' });
-
-  const ok = await bcrypt.compare(password, user.password_hash);
-  if (!ok) return res.status(401).json({ error: 'BAD_CREDENTIALS' });
-
-  const token = signToken(user);
-  delete user.password_hash;
-  res.json({ token, user });
-});
-
-// -------- ЗАКАЗЫ --------
-
-// Создать заказ (клиент оформляет заказ, может указать промокод)
-app.post('/api/orders', async (req, res) => {
-  const { clientName, phone, promoCode } = req.body || {};
-  if (!phone) return res.status(400).json({ error: 'PHONE_REQUIRED' });
-
-  // найдём клиента-пользователя по телефону
-  const userRows = await query(
-    'SELECT id FROM users WHERE phone = $1',
-    [phone]
-  );
-  const userId = userRows[0]?.id || null;
-
-  // найдём партнёра по промокоду (если есть)
-  let partnerId = null;
-  if (promoCode) {
-    const partnerRows = await query(
-      'SELECT id FROM users WHERE promo_code = $1',
-      [promoCode]
-    );
-    partnerId = partnerRows[0]?.id || null;
-  }
-
-  const rows = await query(
-    `INSERT INTO orders(client_name, client_phone, user_id, partner_id, promo_code, status_step)
-     VALUES ($1, $2, $3, $4, $5, 1)
-     RETURNING id, client_name, client_phone, status_step, promo_code, created_at`,
-    [clientName || 'Клиент', phone, userId, partnerId, promoCode || null]
-  );
-
-  res.json(rows[0]);
-});
-
-// Мои заказы (для авторизованного пользователя)
-app.get('/api/orders/my', authMiddleware, async (req, res) => {
-  const userId = req.user.id;
-  const rows = await query(
-    `SELECT id, client_name, client_phone, status_step, promo_code, created_at
-     FROM orders
-     WHERE user_id = $1
-     ORDER BY created_at DESC`,
-    [userId]
-  );
-  res.json(rows);
-});
-
-// Обновить статус заказа (админ/менеджер, здесь без роли – всё равно защищено токеном)
-app.patch('/api/orders/:id/status', authMiddleware, async (req, res) => {
-  const id = +req.params.id;
-  const { statusStep } = req.body || {};
-  if (!statusStep || statusStep < 1 || statusStep > 10) {
-    return res.status(400).json({ error: 'BAD_STATUS' });
-  }
-
-  const rows = await query(
-    `UPDATE orders
-     SET status_step = $1
-     WHERE id = $2
-     RETURNING id, client_name, client_phone, status_step, promo_code, created_at`,
-    [statusStep, id]
-  );
-
-  if (!rows.length) return res.status(404).json({ error: 'NOT_FOUND' });
-  res.json(rows[0]);
-});
-
-// -------- СТАТИСТИКА ПАРТНЁРА --------
-
-// Заказы по моему промокоду (для залогиненного партнёра)
-app.get('/api/partner/stats', authMiddleware, async (req, res) => {
-  const partnerId = req.user.id;
-
-  const rows = await query(
-    `SELECT id, client_name, client_phone, status_step, promo_code, created_at
-     FROM orders
-     WHERE partner_id = $1
-     ORDER BY created_at DESC`,
-    [partnerId]
-  );
-
-  const total = rows.length;
-  res.json({ total, orders: rows });
-});
-
-// health-check
+// === API: Health-check ===
 app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
-const port = process.env.PORT || 3001;
-app.listen(port, () => {
-  console.log('API server listening on port', port);
+// === API: Регистрация ===
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { name, phone, password, isPartner } = req.body;
+
+    if (!name || !phone || !password) {
+      return res.status(400).json({ error: 'Имя, телефон и пароль обязательны' });
+    }
+
+    const clean = cleanPhone(phone);
+    if (!clean) {
+      return res.status(400).json({ error: 'Некорректный телефон' });
+    }
+
+    const client = await pool.connect();
+    try {
+      const existing = await client.query(
+        'SELECT id FROM users WHERE phone = $1',
+        [clean]
+      );
+      if (existing.rows.length > 0) {
+        return res.status(400).json({ error: 'Аккаунт с таким телефоном уже существует' });
+      }
+
+      const hash = await bcrypt.hash(password, 10);
+
+      // Промокод для партнёра: например, MD + id (сделаем позже через UPDATE)
+      const result = await client.query(
+        `INSERT INTO users (name, phone, password_hash, is_partner)
+         VALUES ($1, $2, $3, $4)
+         RETURNING id, name, phone, is_partner, promo_code`,
+        [name, clean, hash, !!isPartner]
+      );
+
+      const user = result.rows[0];
+
+      // Если партнёр — сгенерируем ему промокод MD + id
+      if (user.is_partner) {
+        const code = 'MD' + String(user.id).padStart(4, '0');
+        const upd = await client.query(
+          `UPDATE users SET promo_code = $1 WHERE id = $2
+           RETURNING id, name, phone, is_partner, promo_code`,
+          [code, user.id]
+        );
+        return res.json({ user: upd.rows[0] });
+      }
+
+      res.json({ user });
+    } finally {
+      client.release();
+    }
+  } catch (e) {
+    console.error('/api/auth/register error', e);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
+
+// === API: Логин ===
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { phone, password } = req.body;
+    const clean = cleanPhone(phone);
+
+    if (!clean || !password) {
+      return res.status(400).json({ error: 'Телефон и пароль обязательны' });
+    }
+
+    const client = await pool.connect();
+    try {
+      const result = await client.query(
+        'SELECT * FROM users WHERE phone = $1',
+        [clean]
+      );
+      if (result.rows.length === 0) {
+        return res.status(400).json({ error: 'Аккаунт не найден' });
+      }
+
+      const user = result.rows[0];
+      const ok = await bcrypt.compare(password, user.password_hash);
+      if (!ok) {
+        return res.status(400).json({ error: 'Неверный пароль' });
+      }
+
+      // В реальной системе тут выдаётся JWT. Сейчас просто возвращаем данные.
+      delete user.password_hash;
+      res.json({ user });
+    } finally {
+      client.release();
+    }
+  } catch (e) {
+    console.error('/api/auth/login error', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// === API: Создание заказа (клиент оформляет заказ) ===
+app.post('/api/orders', async (req, res) => {
+  try {
+    const {
+      clientName,
+      clientPhone,
+      promoCode
+    } = req.body;
+
+    if (!clientName || !clientPhone) {
+      return res.status(400).json({ error: 'Имя клиента и телефон обязательны' });
+    }
+
+    const cleanClientPhone = cleanPhone(clientPhone);
+    const cleanPromo = promoCode ? promoCode.trim().toUpperCase() : null;
+
+    const client = await pool.connect();
+    try {
+      let partnerId = null;
+      let userId = null;
+
+      if (cleanPromo) {
+        const partner = await client.query(
+          'SELECT id FROM users WHERE promo_code = $1',
+          [cleanPromo]
+        );
+        if (partner.rows.length > 0) {
+          partnerId = partner.rows[0].id;
+        }
+      }
+
+      // Привяжем заказ к клиенту по телефону, если он уже есть
+      const user = await client.query(
+        'SELECT id FROM users WHERE phone = $1',
+        [cleanClientPhone]
+      );
+      if (user.rows.length > 0) {
+        userId = user.rows[0].id;
+      }
+
+      const result = await client.query(
+        `INSERT INTO orders
+          (client_name, client_phone, user_id, partner_id, promo_code, status_step)
+         VALUES ($1, $2, $3, $4, $5, 1)
+         RETURNING *`,
+        [
+          clientName,
+          cleanClientPhone,
+          userId,
+          partnerId,
+          cleanPromo
+        ]
+      );
+
+      res.json({ order: result.rows[0] });
+    } finally {
+      client.release();
+    }
+  } catch (e) {
+    console.error('/api/orders error', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// === API: Список заказов партнёра по его ID ===
+app.get('/api/partners/:id/orders', async (req, res) => {
+  try {
+    const partnerId = parseInt(req.params.id, 10);
+    if (!partnerId) {
+      return res.status(400).json({ error: 'Некорректный partner id' });
+    }
+
+    const client = await pool.connect();
+    try {
+      const result = await client.query(
+        `SELECT id, client_name, client_phone, promo_code,
+                status_step, created_at
+           FROM orders
+          WHERE partner_id = $1
+          ORDER BY created_at DESC`,
+        [partnerId]
+      );
+
+      const total = result.rows.length;
+      res.json({ total, orders: result.rows });
+    } finally {
+      client.release();
+    }
+  } catch (e) {
+    console.error('/api/partners/:id/orders error', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// === API: Профиль клиента (получить) ===
+app.get('/api/profile/:userId', async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId, 10);
+    if (!userId) return res.status(400).json({ error: 'Некорректный user id' });
+
+    const client = await pool.connect();
+    try {
+      const result = await client.query(
+        `SELECT p.*, u.name, u.phone, u.promo_code, u.is_partner
+           FROM profiles p
+           RIGHT JOIN users u ON p.user_id = u.id
+          WHERE u.id = $1`,
+        [userId]
+      );
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Профиль не найден' });
+      }
+      res.json({ profile: result.rows[0] });
+    } finally {
+      client.release();
+    }
+  } catch (e) {
+    console.error('/api/profile/:userId GET error', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// === API: Профиль клиента (обновить/создать) ===
+app.post('/api/profile/:userId', async (req, res) => {
+  try {
+    const userId = parseInt(req.params.userId, 10);
+    if (!userId) return res.status(400).json({ error: 'Некорректный user id' });
+
+    const {
+      city,
+      address,
+      landmark,
+      email,
+      style,
+      comment
+    } = req.body;
+
+    const client = await pool.connect();
+    try {
+      const existing = await client.query(
+        'SELECT id FROM profiles WHERE user_id = $1',
+        [userId]
+      );
+
+      let result;
+      if (existing.rows.length === 0) {
+        result = await client.query(
+          `INSERT INTO profiles
+            (user_id, city, address, landmark, email, style, comment, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+           RETURNING *`,
+          [userId, city, address, landmark, email, style, comment]
+        );
+      } else {
+        result = await client.query(
+          `UPDATE profiles
+              SET city = $2,
+                  address = $3,
+                  landmark = $4,
+                  email = $5,
+                  style = $6,
+                  comment = $7,
+                  updated_at = now()
+            WHERE user_id = $1
+            RETURNING *`,
+          [userId, city, address, landmark, email, style, comment]
+        );
+      }
+
+      res.json({ profile: result.rows[0] });
+    } finally {
+      client.release();
+    }
+  } catch (e) {
+    console.error('/api/profile/:userId POST error', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// === ЗАПУСК СЕРВЕРА ===
+const port = process.env.PORT || 3001;
+
+initDb()
+  .then(() => {
+    app.listen(port, () => {
+      console.log('API server listening on port', port);
+    });
+  })
+  .catch((e) => {
+    console.error('Fatal DB init error', e);
+    process.exit(1);
+  });
