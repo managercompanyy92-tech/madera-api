@@ -11,7 +11,7 @@ const { Pool } = pkg;
 const app = express();
 app.use(cors());
 app.use(express.json());
-
+app.use('/api/auth', authRoutes);
 // === ПОДКЛЮЧЕНИЕ К БД ===
 if (!process.env.DATABASE_URL) {
   console.error('ERROR: DATABASE_URL is not set');
