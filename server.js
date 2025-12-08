@@ -379,6 +379,100 @@ const port = process.env.PORT || 3001;
 
 initDb()
   .then(() => {
+    // ========== ПАРТНЁРСКАЯ ПРОГРАММА: API ==========
+//
+// Этот блок делает две вещи:
+// 1) Создаёт таблицу partner_requests в базе, если её ещё нет.
+// 2) Добавляет маршрут POST /api/partner/apply для приёма заявок.
+//
+// ВАЖНО: этот код использует уже существующие переменные app и pool,
+// которые объявлены выше в server.js (Express и подключение к Postgres).
+
+// --- 1. Создание таблицы partner_requests при запуске сервера ---
+
+async function ensurePartnerRequestsTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS partner_requests (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        profession TEXT,
+        profile_link TEXT,
+        audience TEXT,
+        status TEXT DEFAULT 'new',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    console.log('✅ partner_requests table is ready');
+  } catch (err) {
+    console.error('❌ Error creating partner_requests table:', err);
+  }
+}
+
+// Запускаем создание таблицы (один раз при старте сервера)
+ensurePartnerRequestsTable();
+
+
+// --- 2. Маршрут приёма заявки на партнёрство ---
+//
+// URL:  POST https://madera-api.onrender.com/api/partner/apply
+// Body: JSON
+// {
+//   "name": "Имя",
+//   "phone": "+992...",
+//   "profession": "Дизайнер / блогер / ...",
+//   "profileLink": "https://instagram.com/...",
+//   "audience": "Кратко об аудитории"
+// }
+
+app.post('/api/partner/apply', async (req, res) => {
+  try {
+    const { name, phone, profession, profileLink, audience } = req.body || {};
+
+    // Простая валидация
+    if (!name || !phone) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Укажите имя и телефон',
+      });
+    }
+
+    // Сохраняем заявку в базу
+    const result = await pool.query(
+      `
+        INSERT INTO partner_requests
+          (name, phone, profession, profile_link, audience)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+      `,
+      [
+        name,
+        phone,
+        profession || null,
+        profileLink || null,
+        audience || null,
+      ],
+    );
+
+    const requestId = result.rows[0]?.id;
+
+    return res.json({
+      ok: true,
+      requestId,
+      message: 'Заявка на партнёрство принята',
+    });
+  } catch (err) {
+    console.error('❌ PARTNER_APPLY_ERROR:', err);
+    return res.status(500).json({
+      ok: false,
+      error: 'Ошибка сервера при отправке заявки',
+    });
+  }
+});
+
+// ========== КОНЕЦ БЛОКА ПАРТНЁРСКОЙ ПРОГРАММЫ ==========
     app.listen(port, () => {
       console.log('API server listening on port', port);
     });
