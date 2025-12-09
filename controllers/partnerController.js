@@ -15,6 +15,8 @@ dotenv.config();
  */
 export const createPartnerRequest = async (req, res) => {
   try {
+    console.log("=== НОВАЯ ЗАЯВКА ===");
+console.log("BODY:", req.body);
     const {
       name,
       phone,
