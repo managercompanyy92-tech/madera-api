@@ -12,6 +12,19 @@ const { Pool } = pkg;
 const app = express();
 app.use(cors());
 app.use(express.json());
+// ================== ПАРТНЁРСКОЕ API ==================
+// Принимаем запросы как по /partner, так и по /api/partner
+// + логируем каждый запрос для отладки в Vercel Logs
+
+app.use(
+  ['/partner', '/api/partner'],
+  (req, res, next) => {
+    console.log('[PARTNER API]', req.method, req.originalUrl);
+    next();
+  },
+  partnerRoutes
+);
+// =====================================================
 app.use('/api/auth', authRoutes);
 app.use('/api/partner', partnerRoutes);
 // === ПОДКЛЮЧЕНИЕ К БД ===
