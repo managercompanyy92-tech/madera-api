@@ -1,4 +1,5 @@
 import authRoutes from './routes/auth.js';
+import partnerRoutes from "./routes/partner.js";
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -12,6 +13,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use('/api/auth', authRoutes);
+app.use('/api/partner', partnerRoutes);
 // === ПОДКЛЮЧЕНИЕ К БД ===
 if (!process.env.DATABASE_URL) {
   console.error('ERROR: DATABASE_URL is not set');
