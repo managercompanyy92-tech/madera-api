@@ -4,7 +4,7 @@ import { createPartnerRequest } from '../controllers/partnerController.js';
 
 const router = express.Router();
 
-// POST /api/partner
-router.post('/', createPartnerRequest);
+// Правильный маршрут для формы партнера
+router.post('/submit', createPartnerRequest);
 
 export default router;
