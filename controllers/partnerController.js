@@ -1,83 +1,58 @@
-// controllers/partnerController.js
-import nodemailer from 'nodemailer';
-import dotenv from 'dotenv';
+import nodemailer from "nodemailer";
 
-dotenv.config();
-
-/**
- * Обработчик заявки партнёра
- * Ожидает в body:
- *  - name
- *  - phone
- *  - profession
- *  - profileLink
- *  - audience
- */
 export const createPartnerRequest = async (req, res) => {
   try {
-    console.log("=== НОВАЯ ЗАЯВКА ===");
-console.log("BODY:", req.body);
     const {
-      name,
+      fullName,
       phone,
-      profession,
+      email,
+      activity,
       profileLink,
       audience,
-    } = req.body || {};
-console.log('PARTNER_REQUEST', {
-      time: new Date().toISOString(),
-      name,
-      phone,
-      profession,
-      profileLink,
-      audience,
-    });
-    // Минимальная валидация
-    if (!name || !phone) {
-      return res.status(400).json({
-        error: 'REQUIRED_FIELDS_MISSING',
-        message: 'Поле "Имя" и "Телефон" обязательны',
-      });
-    }
+    } = req.body;
 
-    // Формируем письмо
-    const html = `
-      <h2>Новая заявка на партнёрство</h2>
-      <p><strong>Имя:</strong> ${name}</p>
-      <p><strong>Телефон:</strong> ${phone}</p>
-      <p><strong>Проф. деятельность:</strong> ${profession || '-'}</p>
-      <p><strong>Профиль (Instagram и т.д.):</strong> ${profileLink || '-'}</p>
-      <p><strong>Кратко об аудитории:</strong> ${audience || '-'}</p>
-      <hr />
-      <p><small>Отправлено с формы партнёров на сайте Madera Design.</small></p>
-    `;
-
-    // Транспорт для отправки почты
+    // Настройка SMTP
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT) || 465,
-      secure: true, // 465 — всегда secure
+      port: Number(process.env.SMTP_PORT),
+      secure: false,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
       },
     });
 
-    // Отправляем письмо
+    // Кому отправлять
+    const notificationEmail = process.env.PARTNER_NOTIFICATION_EMAIL;
+
+    // Текст письма
+    const htmlMessage = `
+      <h2>Новая заявка на партнёрство</h2>
+      <p><b>Имя:</b> ${fullName}</p>
+      <p><b>Телефон:</b> ${phone}</p>
+      <p><b>Email:</b> ${email}</p>
+      <p><b>Деятельность:</b> ${activity}</p>
+      <p><b>Профиль:</b> ${profileLink}</p>
+      <p><b>Аудитория:</b> ${audience}</p>
+    `;
+
+    // Отправка письма
     await transporter.sendMail({
       from: `"Madera Design" <${process.env.SMTP_USER}>`,
-      to: process.env.PARTNER_NOTIFICATION_EMAIL || process.env.SMTP_USER,
-      subject: 'Новая заявка на партнёрство',
-      html,
+      to: notificationEmail,
+      subject: "Новая заявка на партнёрство",
+      html: htmlMessage,
     });
 
-    // Возвращаем успех фронтенду
-    return res.json({ success: true });
-  } catch (err) {
-    console.error('Ошибка при обработке заявки партнёра:', err);
+    return res.json({
+      success: true,
+      message: "Заявка успешно отправлена на почту.",
+    });
+  } catch (error) {
+    console.error("Ошибка отправки письма:", error);
     return res.status(500).json({
-      error: 'SERVER_ERROR',
-      message: 'Не удалось отправить заявку. Попробуйте позже.',
+      success: false,
+      error: "Ошибка сервера при отправке письма",
     });
   }
 };
