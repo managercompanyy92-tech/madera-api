@@ -24,7 +24,14 @@ console.log("BODY:", req.body);
       profileLink,
       audience,
     } = req.body || {};
-
+console.log('PARTNER_REQUEST', {
+      time: new Date().toISOString(),
+      name,
+      phone,
+      profession,
+      profileLink,
+      audience,
+    });
     // Минимальная валидация
     if (!name || !phone) {
       return res.status(400).json({
