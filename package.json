@@ -2,10 +2,12 @@
   "name": "madera-api",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
+  "main": "index.js",
   "scripts": {
-    "test": "echo \"no tests\""
+    "start": "node index.js"
   },
   "dependencies": {
-    "nodemailer": "^6.9.0"
+    "nodemailer": "^6.9.8"
   }
 }
