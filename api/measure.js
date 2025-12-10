@@ -12,6 +12,7 @@ function setCors(res) {
 export default async function handler(req, res) {
   setCors(res);
 
+  // preflight от браузера
   if (req.method === "OPTIONS") {
     return res.status(200).end();
   }
@@ -39,7 +40,8 @@ export default async function handler(req, res) {
       tariff,
       promo,
       description,
-    } = req.body;
+      hasPaymentCheck, // <- добавили флаг по чеку
+    } = req.body || {};
 
     if (!name || !phone) {
       return res
@@ -58,11 +60,12 @@ export default async function handler(req, res) {
 📏 *Длина проекта:* ${length || "-"}
 💰 *Тариф:* ${tariff || "-"}
 🎟 *Промокод:* ${promo || "нет"}
+🧾 *Чек об оплате:* ${hasPaymentCheck ? "прикреплён" : "не прикреплён"}
 📝 *Описание:* ${description || "-"}
-`;
+`.trim();
 
     const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
-    const response = await fetch(url, {
+    const tgResponse = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -72,9 +75,9 @@ export default async function handler(req, res) {
       }),
     });
 
-    const data = await response.json();
-    if (!data.ok) {
-      console.error("Telegram error:", data);
+    const tgData = await tgResponse.json().catch(() => ({}));
+    if (!tgResponse.ok || tgData.ok === false) {
+      console.error("Telegram error:", tgData);
       return res.status(500).json({ ok: false, message: "Telegram error" });
     }
 
