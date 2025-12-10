@@ -1,59 +1,74 @@
 // api/partner.js
 
+// Этот обработчик принимает POST-заявку с сайта
+// и пересылает её в Telegram-бот
+
 export default async function handler(req, res) {
+  // Разрешаем только POST
   if (req.method !== "POST") {
     return res.status(405).json({ message: "Method Not Allowed" });
   }
 
-  try {
-    const {
-      name,
-      phone,
-      profession,
-      profile,
-      audience
-    } = req.body;
+  const { name, phone, profession, profile, audience } = req.body || {};
 
-    const chatId = process.env.TELEGRAM_CHAT_ID;
-    const token = process.env.TELEGRAM_TOKEN;
+  // Проверка обязательных полей (на случай, если с фронта что-то не придёт)
+  if (!name || !phone || !profession || !profile || !audience) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
 
-    if (!chatId || !token) {
-      return res.status(500).json({
-        error: "Telegram credentials missing"
-      });
-    }
+  const token = process.env.TELEGRAM_TOKEN;
+  const chatId = process.env.TELEGRAM_CHAT_ID;
 
-    const textMessage = 
-`📩 Новая заявка на партнёрство:
+  if (!token || !chatId) {
+    return res.status(500).json({
+      error: "Telegram env vars are missing",
+    });
+  }
 
+  // Текст сообщения в Telegram
+  const text = `
+Новая заявка на партнёрство:
 Имя: ${name}
 Телефон: ${phone}
 Профессия: ${profession}
 Профиль: ${profile}
 Аудитория: ${audience}
-`;
+`.trim();
 
-    const telegramURL = `https://api.telegram.org/bot${token}/sendMessage`;
+  try {
+    // Отправляем сообщение в Telegram
+    const tgResponse = await fetch(
+      `https://api.telegram.org/bot${token}/sendMessage`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+        }),
+      }
+    );
 
-    await fetch(telegramURL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: textMessage
-      })
-    });
+    const tgData = await tgResponse.json();
 
+    if (!tgResponse.ok) {
+      console.error("Telegram API error:", tgData);
+      return res.status(502).json({
+        error: "Telegram API error",
+        details: tgData,
+      });
+    }
+
+    // Всё прошло успешно
     return res.status(200).json({
       ok: true,
-      message: "Заявка успешно отправлена в Telegram"
+      message: "Telegram message sent",
     });
-
   } catch (err) {
-    console.error("TELEGRAM ERROR:", err);
+    console.error("SERVER ERROR:", err);
     return res.status(500).json({
-      error: "Failed to send Telegram message",
-      details: err.message
+      error: "Internal server error",
+      details: err.message,
     });
   }
 }
