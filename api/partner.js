@@ -1,14 +1,9 @@
 // api/partner.js
 
-// Эта функция отвечает и за CORS, и за отправку в Telegram
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-// В Vercel сейчас Node 18+, fetch там уже встроен
-
 function setCors(res) {
-  // На время настройки можно оставить *
-  // Потом можно ограничить конкретным доменом сайта
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
@@ -17,7 +12,7 @@ function setCors(res) {
 export default async function handler(req, res) {
   setCors(res);
 
-  // Обработка preflight-запроса браузера (OPTIONS),
+  // Разрешаем preflight-запрос от браузера (OPTIONS),
   // чтобы не было ошибки 405
   if (req.method === "OPTIONS") {
     return res.status(200).end();
