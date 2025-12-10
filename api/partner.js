@@ -18,7 +18,7 @@ export default async function handler(req, res) {
       }
     });
 
-    await transporter.sendMail({
+    const mailOptions = {
       from: process.env.SMTP_USER,
       to: process.env.PARTNER_NOTIFICATION_EMAIL,
       subject: "Новая партнерская заявка",
@@ -29,11 +29,17 @@ export default async function handler(req, res) {
 Профиль: ${profile}
 Аудитория: ${audience}
       `
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    return res.status(200).json({
+      ok: true,
+      message: "Email sent successfully"
     });
 
-    return res.status(200).json({ ok: true });
   } catch (err) {
-    console.error("SMTP ERROR:", err);
+    console.error("EMAIL ERROR:", err);
     return res.status(500).json({
       error: "Email sending failed",
       details: err.message
