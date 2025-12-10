@@ -1,64 +1,42 @@
-// api/partner.js
-const nodemailer = require('nodemailer');
+import nodemailer from "nodemailer";
 
-function createTransport() {
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-
-  if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) {
-    throw new Error('Missing SMTP env vars');
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ message: "Method Not Allowed" });
   }
 
-  return nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: Number(SMTP_PORT),
-    secure: Number(SMTP_PORT) === 465, // true для 465
-    auth: {
-      user: SMTP_USER,
-      pass: SMTP_PASS,
-    },
-  });
-}
-
-module.exports = async (req, res) => {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
-    return res.status(405).json({ message: 'Method Not Allowed' });
-  }
+  const { name, phone, profession, profile, audience } = req.body;
 
   try {
-    const { name, phone, profession, profile, audience } = req.body || {};
-
-    // простая проверка полей
-    if (!name || !phone || !profession || !profile || !audience) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    const transporter = createTransport();
-
-    const to =
-      process.env.PARTNER_NOTIFICATION_EMAIL || process.env.SMTP_USER;
-
-    const text = `
-Имя: ${name}
-Телефон: ${phone}
-Профдеятельность: ${profession}
-Профиль: ${profile}
-Аудитория: ${audience}
-`.trim();
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT),
+      secure: Number(process.env.SMTP_PORT) === 465,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+      }
+    });
 
     await transporter.sendMail({
-      from: `"Madera Design" <${process.env.SMTP_USER}>`,
-      to,
-      subject: 'Новая заявка на партнёрство',
-      text,
+      from: process.env.SMTP_USER,
+      to: process.env.PARTNER_NOTIFICATION_EMAIL,
+      subject: "Новая партнерская заявка",
+      text: `
+Имя: ${name}
+Телефон: ${phone}
+Профессия: ${profession}
+Профиль: ${profile}
+Аудитория: ${audience}
+      `
     });
 
-    return res.status(200).json({ success: true });
+    return res.status(200).json({ ok: true });
   } catch (err) {
-    console.error('Email sending failed', err);
+    console.error("SMTP ERROR:", err);
     return res.status(500).json({
-      error: 'Email sending failed',
-      details: err.message,
+      error: "Email sending failed",
+      details: err.message
     });
   }
-};
+}
