@@ -1,73 +1,82 @@
 // api/partner.js
 
-// Этот обработчик принимает POST-заявку с сайта
-// и пересылает её в Telegram-бот
+// Эта функция отвечает и за CORS, и за отправку в Telegram
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+// В Vercel сейчас Node 18+, fetch там уже встроен
+
+function setCors(res) {
+  // На время настройки можно оставить *
+  // Потом можно ограничить конкретным доменом сайта
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
 
 export default async function handler(req, res) {
-  // Разрешаем только POST
+  setCors(res);
+
+  // Обработка preflight-запроса браузера (OPTIONS),
+  // чтобы не было ошибки 405
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   if (req.method !== "POST") {
-    return res.status(405).json({ message: "Method Not Allowed" });
+    return res.status(405).json({ ok: false, message: "Method Not Allowed" });
   }
 
-  const { name, phone, profession, profile, audience } = req.body || {};
-
-  // Проверка обязательных полей (на случай, если с фронта что-то не придёт)
-  if (!name || !phone || !profession || !profile || !audience) {
-    return res.status(400).json({ error: "Missing required fields" });
+  if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) {
+    console.error("Missing TELEGRAM env vars");
+    return res
+      .status(500)
+      .json({ ok: false, message: "Server config error (Telegram env)" });
   }
-
-  const token = process.env.TELEGRAM_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-
-  if (!token || !chatId) {
-    return res.status(500).json({
-      error: "Telegram env vars are missing",
-    });
-  }
-
-  // Текст сообщения в Telegram
-  const text = `
-Новая заявка на партнёрство:
-Имя: ${name}
-Телефон: ${phone}
-Профессия: ${profession}
-Профиль: ${profile}
-Аудитория: ${audience}
-`.trim();
 
   try {
-    // Отправляем сообщение в Telegram
-    const tgResponse = await fetch(
-      `https://api.telegram.org/bot${token}/sendMessage`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text,
-        }),
-      }
-    );
+    const { name, phone, profession, profile, audience } = req.body || {};
 
-    const tgData = await tgResponse.json();
-
-    if (!tgResponse.ok) {
-      console.error("Telegram API error:", tgData);
-      return res.status(502).json({
-        error: "Telegram API error",
-        details: tgData,
-      });
+    if (!name || !phone) {
+      return res
+        .status(400)
+        .json({ ok: false, message: "Name and phone are required" });
     }
 
-    // Всё прошло успешно
-    return res.status(200).json({
-      ok: true,
-      message: "Telegram message sent",
+    const text =
+      "Новая заявка на партнёрство:\n" +
+      `Имя: ${name}\n` +
+      `Телефон: ${phone}\n` +
+      `Профессия: ${profession || "-"}\n` +
+      `Профиль: ${profile || "-"}\n` +
+      `Аудитория: ${audience || "-"}`;
+
+    const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+
+    const tgResponse = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text,
+      }),
     });
+
+    const tgData = await tgResponse.json().catch(() => ({}));
+
+    if (!tgResponse.ok || tgData.ok === false) {
+      console.error("TELEGRAM ERROR:", tgData);
+      return res
+        .status(500)
+        .json({ ok: false, message: "Telegram send failed" });
+    }
+
+    return res.status(200).json({ ok: true, message: "Sent to Telegram" });
   } catch (err) {
-    console.error("SERVER ERROR:", err);
+    console.error("PARTNER API ERROR:", err);
     return res.status(500).json({
-      error: "Internal server error",
+      ok: false,
+      message: "Internal server error",
       details: err.message,
     });
   }
