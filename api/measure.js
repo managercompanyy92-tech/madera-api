@@ -3,19 +3,28 @@
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
+function setCors(res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}
+
 export default async function handler(req, res) {
-  // Разрешаем только POST
+  setCors(res);
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ ok: false, message: "Method Not Allowed" });
   }
 
-  // Проверяем наличие токена и chat_id
   if (!TELEGRAM_TOKEN || !TELEGRAM_CHAT_ID) {
-    console.error("Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID");
-    return res.status(500).json({
-      ok: false,
-      message: "Server Telegram config error"
-    });
+    console.error("Missing TELEGRAM env vars");
+    return res
+      .status(500)
+      .json({ ok: false, message: "Server config error (Telegram env)" });
   }
 
   try {
@@ -29,19 +38,17 @@ export default async function handler(req, res) {
       length,
       tariff,
       promo,
-      description
+      description,
     } = req.body;
 
     if (!name || !phone) {
-      return res.status(400).json({
-        ok: false,
-        message: "Name and phone are required"
-      });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Name and phone are required" });
     }
 
-    const text =
-`🟧 *Новая заявка на замер и расчёт:*
-
+    const text = `
+🟧 *Новая заявка на замер и расчёт:*
 🧑‍💼 *Имя:* ${name}
 📞 *Телефон:* ${phone}
 📍 *Адрес:* ${address || "-"}
@@ -51,38 +58,31 @@ export default async function handler(req, res) {
 📏 *Длина проекта:* ${length || "-"}
 💰 *Тариф:* ${tariff || "-"}
 🎟 *Промокод:* ${promo || "нет"}
-📝 *Описание:* ${description || "-"}`;
+📝 *Описание:* ${description || "-"}
+`;
 
-
-    // Отправка сообщения в Telegram
     const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
-    const tgResponse = await fetch(url, {
+    const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: TELEGRAM_CHAT_ID,
         text,
-        parse_mode: "Markdown"
-      })
+        parse_mode: "Markdown",
+      }),
     });
 
-    const tgData = await tgResponse.json();
-
-    if (!tgData.ok) {
-      console.error("Telegram error:", tgData);
-      return res.status(500).json({
-        ok: false,
-        message: "Telegram sending failed"
-      });
+    const data = await response.json();
+    if (!data.ok) {
+      console.error("Telegram error:", data);
+      return res.status(500).json({ ok: false, message: "Telegram error" });
     }
 
-    return res.status(200).json({ ok: true, message: "Success" });
-
+    return res.status(200).json({ ok: true, message: "Sent successfully" });
   } catch (err) {
     console.error("Measure form error:", err);
-    return res.status(500).json({
-      ok: false,
-      message: "Internal Server Error"
-    });
+    return res
+      .status(500)
+      .json({ ok: false, message: "Internal Server Error" });
   }
 }
