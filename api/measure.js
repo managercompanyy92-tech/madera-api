@@ -1,3 +1,5 @@
+// api/measure.js
+
 import { sendTelegramMessage } from '../utils/telegram.js';
 
 export default async function handler(req, res) {
@@ -19,22 +21,31 @@ export default async function handler(req, res) {
       description
     } = req.body;
 
+    if (!name || !phone) {
+      return res.status(400).json({
+        ok: false,
+        message: "Name and phone are required"
+      });
+    }
+
     const text =
-      `🟩 *Новая заявка на замер:*\n\n` +
-      `👤 *Имя:* ${name}\n` +
-      `📞 *Телефон:* ${phone}\n` +
-      `📍 *Адрес:* ${address}\n` +
-      `🧭 *Ориентир:* ${landmark}\n` +
-      `💬 *Способ связи:* ${contactMethod}\n` +
-      `🪑 *Категория:* ${category}\n` +
-      `📏 *Длина проекта:* ${length}\n` +
-      `💰 *Тариф:* ${tariff}\n` +
-      `🎟 *Промокод:* ${promo || "нет"}\n` +
-      `📝 *Описание:* ${description}`;
+`🟩 *Новая заявка на замер:*  
+
+🧑‍💼 *Имя:* ${name}
+📞 *Телефон:* ${phone}
+📍 *Адрес:* ${address || "-"}
+🧭 *Ориентир:* ${landmark || "-"}
+💬 *Способ связи:* ${contactMethod || "-"}
+🪑 *Категория:* ${category || "-"}
+📏 *Длина проекта:* ${length || "-"}
+💰 *Тариф:* ${tariff || "-"}
+🎟 *Промокод:* ${promo || "нет"}
+📝 *Описание:* ${description || "-"}`;
 
     await sendTelegramMessage(text);
 
     return res.status(200).json({ success: true });
+
   } catch (e) {
     console.error("Measure error:", e);
     return res.status(500).json({ message: "Internal Server Error" });
